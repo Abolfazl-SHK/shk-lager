@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHK Lager</title>
+
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+*{box-sizing:border-box}
+
+body{
+margin:0;
+font-family:Arial,sans-serif;
+background:#f3f4f6;
+color:#222
+}
+
+header{
+background:#222;
+color:white;
+padding:20px;
+text-align:center
+}
+
+header h1{
+margin:0;
+font-size:24px
+}
+
+.container{
+max-width:700px;
+margin:auto;
+padding:15px
+}
+
+.card{
+background:white;
+padding:18px;
+margin-bottom:15px;
+border-radius:14px;
+box-shadow:0 2px 8px #0001
+}
+
+input,select{
+width:100%;
+padding:12px;
+margin:6px 0 12px;
+border:1px solid #ccc;
+border-radius:9px;
+font-size:16px
+}
+
+button{
+padding:11px 15px;
+border:0;
+border-radius:9px;
+background:#222;
+color:white;
+font-size:15px;
+margin:3px
+}
+
+.green{background:#198754}
+.red{background:#c62828}
+.gray{background:#ddd;color:#222}
+
+.row{
+display:flex;
+gap:8px
+}
+
+.row>*{
+flex:1
+}
+
+#reader{
+width:100%;
+max-width:450px;
+margin:auto
+}
+
+.status{
+text-align:center;
+color:#666;
+margin:10px
+}
+
+.item{
+border-top:1px solid #eee;
+padding:14px 0
+}
+
+.item:first-child{
+border-top:0
+}
+
+.item-name{
+font-size:18px;
+font-weight:bold
+}
+
+.item-barcode{
+font-size:12px;
+color:#777
+}
+
+.stock{
+font-size:22px;
+font-weight:bold;
+margin:8px 0
+}
+
+.low{
+color:#d00000
+}
+
+.empty{
+text-align:center;
+color:#777;
+padding:20px
+}
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>📦 SHK Lager</h1>
+<p>Artikel · Barcode · Bestand</p>
+</header>
+
+<div class="container">
+
+<div class="card">
+
+<h2>📷 Barcode scannen</h2>
+
+<div id="reader"></div>
+
+<div id="status" class="status">
+Scanner nicht gestartet
+</div>
+
+<button onclick="startScanner()">
+Scanner starten
+</button>
+
+<button class="gray" onclick="stopScanner()">
+Scanner stoppen
+</button>
+
+</div>
+
+
+<div class="card">
+
+<h2>➕ Artikel hinzufügen</h2>
+
+<label>Barcode</label>
+
+<input id="barcode" placeholder="Barcode">
+
+
+<label>Artikelname</label>
+
+<input id="name" placeholder="z.B. Kupferrohr 15 mm">
+
+
+<div class="row">
+
+<div>
+
+<label>Anzahl</label>
+
+<input
+id="quantity"
+type="number"
+min="0"
+value="1">
+
+</div>
+
+<div>
+
+<label>Einheit</label>
+
+<select id="unit">
+
+<option>Stück</option>
+<option>Meter</option>
+<option>Karton</option>
+<option>Rolle</option>
+<option>Set</option>
+
+</select>
+
+</div>
+
+</div>
+
+
+<label>Mindestbestand</label>
+
+<input
+id="minimum"
+type="number"
+min="0"
+value="0">
+
+
+<button onclick="saveItem()">
+Speichern
+</button>
+
+<button
+class="gray"
+onclick="clearForm()">
+Leeren
+</button>
+
+</div>
+
+
+<div class="card">
+
+<h2>📦 Lagerbestand</h2>
+
+<input
+id="search"
+placeholder="🔎 Artikel suchen..."
+oninput="showItems()">
+
+
+<div class="row">
+
+<button
+class="green"
+onclick="setMode(1)">
+➕ Zugang
+</button>
+
+<button
+class="red"
+onclick="setMode(-1)">
+➖ Entnahme
+</button>
+
+</div>
+
+<p id="modeText">
+Aktueller Modus: ➕ Zugang
+</p>
+
+<div id="items"></div>
+
+</div>
+
+
+<div class="card">
+
+<h2>💾 Daten</h2>
+
+<button onclick="exportCSV()">
+📊 Excel / CSV
+</button>
+
+<button
+class="gray"
+onclick="backupData()">
+💾 Backup
+</button>
+
+<button
+class="gray"
+onclick="restoreData()">
+📥 Backup laden
+</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+let inventory =
+JSON.parse(
+localStorage.getItem("shk_inventory")
+) || {};
+
+let scanner = null;
+let scannerRunning = false;
+let scanMode = 1;
+
+
+function saveData(){
+
+localStorage.setItem(
+"shk_inventory",
+JSON.stringify(inventory)
+);
+
+}
+
+
+function setMode(mode){
+
+scanMode = mode;
+
+document.getElementById(
+"modeText"
+).innerText =
+mode === 1
+? "Aktueller Modus: ➕ Zugang"
+: "Aktueller Modus: ➖ Entnahme";
+
+}
+
+
+function saveItem(){
+
+const barcode =
+document.getElementById("barcode")
+.value.trim();
+
+const name =
+document.getElementById("name")
+.value.trim();
+
+const quantity =
+Number(
+document.getElementById("quantity")
+.value
+);
+
+const unit =
+document.getElementById("unit")
+.value;
+
+const minimum =
+Number(
+document.getElementById("minimum")
+.value
+);
+
+if(!barcode){
+
+alert("Bitte Barcode eingeben.");
+return;
+
+}
+
+if(!name){
+
+alert("Bitte Artikelname eingeben.");
+return;
+
+}
+
+inventory[barcode]={
+
+barcode:barcode,
+name:name,
+quantity:quantity,
+unit:unit,
+minimum:minimum
+
+};
+
+saveData();
+
+showItems();
+
+clearForm();
+
+document.getElementById(
+"status"
+).innerText =
+"Artikel gespeichert.";
+
+}
+
+
+function clearForm(){
+
+document.getElementById(
+"barcode"
+).value="";
+
+document.getElementById(
+"name"
+).value="";
+
+document.getElementById(
+"quantity"
+).value=1;
+
+document.getElementById(
+"minimum"
+).value=0;
+
+}
+
+
+function changeQuantity(
+barcode,
+amount
+){
+
+if(!inventory[barcode])
+return;
+
+inventory[barcode].quantity += amount;
+
+if(
+inventory[barcode].quantity < 0
+){
+
+inventory[barcode].quantity=0;
+
+}
+
+saveData();
+
+showItems();
+
+}
+
+
+function showItems(){
+
+const container =
+document.getElementById("items");
+
+const search =
+document.getElementById("search")
+.value
+.toLowerCase();
+
+const filtered =
+Object.values(inventory)
+.filter(item =>
+
+item.name
+.toLowerCase()
+.includes(search)
+
+||
+
+item.barcode
+.toLowerCase()
+.includes(search)
+
+);
+
+if(filtered.length===0){
+
+container.innerHTML=
+`
+<div class="empty">
+Noch keine Artikel vorhanden.
+</div>
+`;
+
+return;
+
+}
+
+container.innerHTML="";
+
+
+filtered.forEach(item=>{
+
+const low =
+item.minimum > 0 &&
+item.quantity <= item.minimum;
+
+const div =
+document.createElement("div");
+
+div.className="item";
+
+div.innerHTML=`
+
+<div class="item-name">
+${item.name}
+</div>
+
+<div class="item-barcode">
+Barcode: ${item.barcode}
+</div>
+
+<div class="stock ${low?"low":""}">
+
+${item.quantity}
+${item.unit}
+
+${low?" ⚠️":""}
+
+</div>
+
+<button
+class="red"
+onclick="changeQuantity('${item.barcode}',-1)">
+−
+</button>
+
+<button
+class="green"
+onclick="changeQuantity('${item.barcode}',1)">
++
+</button>
+
+`;
+
+container.appendChild(div);
+
+});
+
+}
+
+
+async function startScanner(){
+
+if(scannerRunning)
+return;
+
+scanner =
+new Html5Qrcode("reader");
+
+try{
+
+await scanner.start(
+
+{facingMode:"environment"},
+
+{
+fps:10,
+qrbox:{
+width:250,
+height:120
+}
+},
+
+function(decodedText){
+
+handleBarcode(decodedText);
+
+},
+
+function(){}
+
+);
+
+scannerRunning=true;
+
+document.getElementById(
+"status"
+).innerText=
+"📷 Scanner aktiv";
+
+}
+
+catch(error){
+
+alert(
+"Kamera konnte nicht gestartet werden."
+);
+
+}
+
+}
+
+
+async function stopScanner(){
+
+if(
+scanner &&
+scannerRunning
+){
+
+try{
+
+await scanner.stop();
+
+scanner.clear();
+
+}
+catch(e){}
+
+scannerRunning=false;
+
+document.getElementById(
+"status"
+).innerText=
+"Scanner gestoppt.";
+
+}
+
+}
+
+
+function handleBarcode(barcode){
+
+barcode =
+String(barcode).trim();
+
+document.getElementById(
+"barcode"
+).value=barcode;
+
+
+if(inventory[barcode]){
+
+inventory[barcode].quantity +=
+scanMode;
+
+if(
+inventory[barcode].quantity < 0
+){
+
+inventory[barcode].quantity=0;
+
+}
+
+saveData();
+
+showItems();
+
+document.getElementById(
+"status"
+).innerText=
+
+inventory[barcode].name+
+" → "+
+inventory[barcode].quantity+
+" "+
+inventory[barcode].unit;
+
+}
+
+else{
+
+document.getElementById(
+"status"
+).innerText=
+"🆕 Neuer Artikel: "+
+barcode;
+
+document.getElementById(
+"name"
+).focus();
+
+}
+
+}
+
+
+function exportCSV(){
+
+let rows=[
+
+[
+"Barcode",
+"Artikel",
+"Anzahl",
+"Einheit",
+"Mindestbestand"
+]
+
+];
+
+Object.values(inventory)
+.forEach(item=>{
+
+rows.push([
+
+item.barcode,
+item.name,
+item.quantity,
+item.unit,
+item.minimum
+
+]);
+
+});
+
+
+const csv =
+rows.map(row=>
+row.map(value=>
+'"'+
+String(value)
+.replaceAll('"','""')+
+'"'
+).join(";")
+).join("\n");
+
+
+const blob =
+new Blob(
+["\ufeff"+csv],
+{
+type:"text/csv;charset=utf-8"
+}
+);
+
+const url =
+URL.createObjectURL(blob);
+
+const a =
+document.createElement("a");
+
+a.href=url;
+
+a.download=
+"SHK_Lagerbestand.csv";
+
+a.click();
+
+URL.revokeObjectURL(url);
+
+}
+
+
+function backupData(){
+
+const blob =
+new Blob(
+
+[
+JSON.stringify(
+inventory,
+null,
+2
+)
+],
+
+{
+type:"application/json"
+}
+
+);
+
+const url =
+URL.createObjectURL(blob);
+
+const a =
+document.createElement("a");
+
+a.href=url;
+
+a.download=
+"SHK_Lager_Backup.json";
+
+a.click();
+
+URL.revokeObjectURL(url);
+
+}
+
+
+function restoreData(){
+
+const input =
+document.createElement("input");
+
+input.type="file";
+
+input.accept=".json";
+
+input.onchange =
+async function(){
+
+const file =
+input.files[0];
+
+if(!file)
+return;
+
+try{
+
+inventory =
+JSON.parse(
+await file.text()
+);
+
+saveData();
+
+showItems();
+
+alert(
+"Backup erfolgreich geladen."
+);
+
+}
+
+catch(e){
+
+alert(
+"Backup ungültig."
+);
+
+}
+
+};
+
+input.click();
+
+}
+
+
+showItems();
+
+</script>
+
+</body>
+</html>
